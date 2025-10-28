@@ -5,13 +5,11 @@ MVLP is an application that connects your iPixel-compatible LED panel to [Multiv
 **Note:** This project was entirely *vibecoded*. It works, but expect rough edges, unfinished logic, and behavior that may not always be predictable.
 
 ## Features
-
-- **Modern GUI**: A clean, dark user interface with a red and black theme.  
+ 
 - **Automatic F1 Track Status**: Displays Green, Yellow, Red, Safety Car, and VSC status automatically.  
 - **Auto-Discovery**: Scans for and finds your iPixel panels on startup.  
 - **Device Management**: Remembers your devices and automatically reconnects on future launches.  
 - **Full Device Control**: A dedicated window to manage connected devices, adjust brightness, flip the display 180°, and configure panel-specific settings.  
-- **Debug & Manual Send**: A separate DEBUG window allows you to manually send any GIF or image file to your displays for testing or custom use.  
 
 ## Requirements
 
