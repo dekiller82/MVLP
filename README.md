@@ -13,7 +13,7 @@ MVLP is an application that connects your iPixel-compatible LED panel to [Multiv
 
 ## Requirements
 
-- An iPixel-compatible LED matrix panel.  
+- An iPixel-compatible LED matrix panel.  (currently being sold at Action stores in Europe)
 - A computer with Python 3.8+ and Bluetooth.  
 - [Multiviewer](https://multiviewer.app/) installed and running on the same computer.  
 
