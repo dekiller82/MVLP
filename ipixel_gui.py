@@ -14,6 +14,12 @@ import sys
 from PIL import Image, ImageTk, ImageDraw, GifImagePlugin
 import ttkbootstrap as ttk
 
+# Set AppUserModelID for Windows to handle taskbar icon correctly
+if sys.platform == "win32":
+    import ctypes
+    myappid = 'sdolphin.mvlp.ipixel-ctrl.1' # arbitrary unique string
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
 # New imports for advanced BLE handling
 import json
 from bleak import BleakClient, BleakScanner
@@ -475,9 +481,11 @@ class App(ttk.Window):
         """Creates a 16x16 PIL image for the checkbox."""
         img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        draw.rectangle((2, 2, 13, 13), outline="gray", fill=None)
+        # Draw the box
+        draw.rectangle((2, 2, 13, 13), outline="#888888", width=1)
         if checked:
-            draw.text((4, 0), "✔", fill="limegreen")
+            # Draw a crisp, manual checkmark
+            draw.line([(4, 8), (7, 11), (12, 4)], fill="#dc3545", width=2)
         return ImageTk.PhotoImage(img)
 
     def load_icon_image(self, path, size):
