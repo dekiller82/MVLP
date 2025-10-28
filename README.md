@@ -1,22 +1,23 @@
 # MVLP - Multiviewer LED Panel
 
-MVLP is an application that connects your iPixel-compatible LED panel to [Multiviewer](https://multiviewer.app/). It automatically displays the current track status—like green flags, yellow flags, and safety cars—on your LED panel, providing instant visual feedback during a race.
+MVLP is an application that connects your iPixel-compatible LED panel to [Multiviewer](https://multiviewer.app/). It automatically displays the current track status—such as green flags, yellow flags, and safety cars—on your LED panel, providing instant visual feedback during a race.
 
+**Note:** This project was entirely *vibecoded*. It works, but expect rough edges, unfinished logic, and behavior that may not always be predictable.
 
 ## Features
 
-- **Modern GUI**: A clean, dark user interface with a red and black theme.
-- **Automatic F1 Track Status**: Displays Green, Yellow, Red, Safety Car, and VSC status without any user interaction.
-- **Auto-Discovery**: Scans for and finds your iPixel panels on startup.
-- **Device Management**: Remembers your devices and automatically reconnects on future launches.
-- **Full Device Control**: A dedicated window to manage connected devices, adjust brightness, flip the display 180°, and set other panel-specific options.
-- **Debug & Manual Send**: A separate DEBUG window allows you to manually send any GIF or image file to your displays for testing or custom use.
+- **Modern GUI**: A clean, dark user interface with a red and black theme.  
+- **Automatic F1 Track Status**: Displays Green, Yellow, Red, Safety Car, and VSC status automatically.  
+- **Auto-Discovery**: Scans for and finds your iPixel panels on startup.  
+- **Device Management**: Remembers your devices and automatically reconnects on future launches.  
+- **Full Device Control**: A dedicated window to manage connected devices, adjust brightness, flip the display 180°, and configure panel-specific settings.  
+- **Debug & Manual Send**: A separate DEBUG window allows you to manually send any GIF or image file to your displays for testing or custom use.  
 
 ## Requirements
 
-- An iPixel-compatible LED matrix panel.
-- A computer with Python 3.8+ and Bluetooth.
-- [Multiviewer for F1](https://multiviewer.app/) installed and running on the same computer.
+- An iPixel-compatible LED matrix panel.  
+- A computer with Python 3.8+ and Bluetooth.  
+- [Multiviewer for F1](https://multiviewer.app/) installed and running on the same computer.  
 
 ## Installation
 
