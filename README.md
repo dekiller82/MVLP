@@ -22,7 +22,7 @@ MVLP is an application that connects your iPixel-compatible LED panel to [Multiv
 1.  **Clone the Repository**: First, download the project files to your computer.
     ```bash
     git clone https://github.com/dekiller82/MVLP.git
-    cd ipixel-ctrl
+    cd MVLP
     ```
 
 2.  **Install Dependencies**: This project requires several Python libraries. You can install them all with a single command from the project's root directory.
