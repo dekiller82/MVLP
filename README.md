@@ -2,6 +2,8 @@
 
 MVLP is an application that connects your iPixel-compatible LED panel to [Multiviewer](https://multiviewer.app/). It automatically displays the current track status—such as green flags, yellow flags, and safety cars—on your LED panel, providing instant visual feedback during a race.
 
+![MVLP Screenshot](https://i.imgur.com/dSzoiTl.png)
+
 **Note:** This project was entirely *vibecoded*. It works, but expect rough edges, unfinished logic, and behavior that may not always be predictable.
 
 ## Features
