@@ -11,6 +11,7 @@ import os
 import glob
 import httpx
 import sys
+from datetime import datetime
 from PIL import Image, ImageTk, ImageDraw, GifImagePlugin
 import ttkbootstrap as ttk
 
@@ -31,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 try:
     # Correctly import the command modules from the new package structure
     from ipixel_ctrl.commands import write_data_png, write_data_gif, erase_data
-    from ipixel_ctrl.commands import set_brightness, set_upside_down
+    from ipixel_ctrl.commands import set_brightness, set_upside_down, set_clock_mode
 except ImportError as e: # pragma: no cover
     messagebox.showerror("Import Error", f"Failed to import ipixel_ctrl module: {e}\n\nPlease run 'pip install -e .' from the project root.")
     sys.exit(1)
@@ -353,8 +354,9 @@ class App(ttk.Window):
         # --- Global Action Frame ---
         action_frame = ttk.Frame(parent)
         action_frame.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
-        action_frame.columnconfigure(0, weight=2)
+        action_frame.columnconfigure(0, weight=1)
         action_frame.columnconfigure(1, weight=1)
+
         self.erase_button = ttk.Button(action_frame, text="Erase All Buffers", command=self.start_erase, bootstyle="secondary")
         self.erase_button.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
         self.write_button = ttk.Button(action_frame, text="Write to All Devices", command=self.start_write, bootstyle="primary")
@@ -432,8 +434,14 @@ class App(ttk.Window):
         self.flip_check = ttk.Checkbutton(self.options_frame, text="Flip Display 180°", variable=self.flip_display_var, state=tk.DISABLED, command=self.on_flip_change)
         self.flip_check.grid(row=7, column=1, padx=5, pady=5, sticky="w")
 
+        # Add Clock Style Combobox
+        ttk.Label(self.options_frame, text="Exit Clock Style:").grid(row=8, column=0, padx=5, pady=5, sticky="w")
+        self.clock_style_var = tk.StringVar()
+        self.clock_style_combo = ttk.Combobox(self.options_frame, textvariable=self.clock_style_var, values=[str(i) for i in range(1, 9)], state=tk.DISABLED, width=5)
+        self.clock_style_combo.grid(row=8, column=1, padx=5, pady=5, sticky="w")
+
         # Add save button for device config
-        ttk.Button(self.options_frame, text="Save Options", command=self.save_device_options, state=tk.DISABLED, bootstyle="success").grid(row=8, column=1, sticky="e", padx=5, pady=5)
+        ttk.Button(self.options_frame, text="Save Options", command=self.save_device_options, state=tk.DISABLED, bootstyle="success").grid(row=9, column=1, sticky="e", padx=5, pady=5)
 
     def setup_png_tab(self):
         self.join_files_var = tk.BooleanVar()
@@ -607,7 +615,7 @@ class App(ttk.Window):
                 self.device_configs[address] = {
                     'buffer': 1, 'auto_resize': True, 'width': width, 'height': height, 
                     'anchor': 0x33, 'duplicate_horizontally': False,
-                    'brightness': 100, 'flip_display': False
+                    'brightness': 100, 'flip_display': False, 'clock_style': 7
                 }
                 dialog.destroy()
                 self.connect_to_device(address)
@@ -622,7 +630,7 @@ class App(ttk.Window):
         if address not in self.device_configs:
             self.device_configs[address] = {
                 'buffer': 1, 'auto_resize': True, 'width': 96, 'height': 32, 'anchor': 0x33, 'duplicate_horizontally': False,
-                'brightness': 100, 'flip_display': False
+                'brightness': 100, 'flip_display': False, 'clock_style': 7
             }
 
         # Each device gets its own command queue for targeted commands.
@@ -720,6 +728,9 @@ class App(ttk.Window):
             self.flip_display_var.set(config.get('flip_display', False))
             self.flip_check.config(state=state)
 
+            self.clock_style_var.set(str(config.get('clock_style', 7)))
+            self.clock_style_combo.config(state=state)
+
             self.options_frame.winfo_children()[-1].config(state=state) # Enable save button
         else:
             state = tk.DISABLED
@@ -727,7 +738,7 @@ class App(ttk.Window):
             # Disable all widgets in the options frame except the save button
             for widget in self.options_frame.winfo_children()[:-1]:
                 if isinstance(widget, (ttk.Entry, ttk.Checkbutton, ttk.Scale)):
-                    widget.config(state=state)
+                    widget.config(state=state) # This will disable Combobox too
             self.options_frame.winfo_children()[-1].config(state=state) # Disable save button
 
     def on_brightness_release(self, event=None):
@@ -763,7 +774,8 @@ class App(ttk.Window):
                 'anchor': int(self.anchor_entry.get(), 0),
                 'duplicate_horizontally': self.duplicate_h_var.get(),
                 'brightness': self.brightness_var.get(),
-                'flip_display': self.flip_display_var.get()
+                'flip_display': self.flip_display_var.get(),
+                'clock_style': int(self.clock_style_var.get())
             }
             self.device_configs[self.selected_device_address] = config
             self.save_config()
@@ -798,6 +810,7 @@ class App(ttk.Window):
                 self.mv_thread = MultiviewerThread(self.mv_action_queue, self.status_queue)
                 self.mv_thread.start()
                 print("Multiviewer thread started.")
+                self.send_gif_from_path("gifs/mv.gif")
 
             # Disable the checkbox to prevent rapid toggling.
             self.mv_checkbutton.config(state=tk.DISABLED)
@@ -812,6 +825,7 @@ class App(ttk.Window):
             if self.mv_thread and self.mv_thread.is_alive():
                 self.mv_thread.stop()
                 print("Multiviewer thread stopped.")
+            self.send_clock_command_to_all()
 
     def process_status_queue(self):
         """Check for new status messages and update the GUI."""
@@ -837,6 +851,11 @@ class App(ttk.Window):
                     self.toggle_multiviewer()
                     self.startup_actions_done = True
                 
+                # Erase the device's memory before sending the initial GIF
+                erase_params = argparse.Namespace(erase_all=True, buffer=[])
+                self.queue_command_for_device(address, erase_params, erase_data.make, f"Erase on connect for {address}")
+
+                # Send the startup GIF
                 self.send_gif_from_path("gifs/mv.gif")
 
                 self.save_config()
@@ -917,6 +936,33 @@ class App(ttk.Window):
 
         # This command is the same for all devices, so we can use the broadcast queue
         self.queue_command_for_all(params, make_function, "Erase")
+
+    def send_clock_command_to_all(self):
+        """Sends the clock command to all connected devices, using their individual style settings."""
+        if not self.ble_threads:
+            return
+
+        for address, thread in self.ble_threads.items():
+            config = self.device_configs.get(address, {})
+            style = config.get('clock_style', 7)  # Default to 7 if not set
+            self.send_clock_command_to_device(address, style)
+
+    def send_clock_command_to_device(self, address, style=1):
+        """Sends the command to display the current time on the device."""
+        if address not in self.ble_threads:
+            return
+
+        now = datetime.now()
+        lang = 0 # 0 for International (DD/MM), 1 for China (MM/DD)
+        params = argparse.Namespace(
+            clock_mode_style=style,
+            clock_mode_date=now.strftime("%Y-%m-%d"),
+            clock_mode_time=now.strftime("%H:%M:%S"),
+            clock_mode_lang=lang,
+            clock_mode_show_date=True, # Hardcoded for simplicity
+            clock_mode_show_24h=True,  # Hardcoded for simplicity
+        )
+        self.queue_command_for_device(address, params, set_clock_mode.make, f"Clock Style {style}")
 
     def start_write(self):
         if not self.ble_threads:
@@ -1057,6 +1103,9 @@ if __name__ == "__main__":
     app = App()
 
     def on_closing():
+        app.send_clock_command_to_all()
+        # Give the BLE threads a moment to send the clock command before stopping them.
+        time.sleep(0.5)
         if app.mv_thread and app.mv_thread.is_alive():
             app.mv_thread.stop()
         for thread in app.ble_threads.values():
