@@ -9,6 +9,7 @@ MVLP is an application that connects your iPixel-compatible LED panel to [Multiv
 - **Automatic F1 Track Status**: Displays Green, Yellow, Red, Safety Car, and VSC status automatically.  
 - **Auto-Discovery**: Scans for and finds your iPixel panels on startup.  
 - **Device Management**: Remembers your devices and automatically reconnects on future launches.  
+- **Spotify Integration**: Shows the album art of the currently playing song.
 - **Full Device Control**: A dedicated window to manage connected devices, adjust brightness, flip the display 180°, and configure panel-specific settings.  
 
 ## Requirements
@@ -44,6 +45,25 @@ MVLP is an application that connects your iPixel-compatible LED panel to [Multiv
 3.  **Normal Use**: On subsequent launches, the app will automatically find and reconnect to your saved devices. The Multiviewer integration will start, and your panel will be ready for the race!
 
 
+## Spotify Integration Setup
+
+To display album art from Spotify, you need to set up a Spotify Developer application.
+
+1.  **Go to the Spotify Developer Dashboard**: Log in with your Spotify account at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard).
+2.  **Create an App**:
+    - Click "Create App".
+    - Give it a name (e.g., "MVLP Display") and a description.
+    - Agree to the terms.
+3.  **Get Credentials**:
+    - Once the app is created, you will see your **Client ID**. Click "Show client secret" to see the **Client Secret**. You will need both of these.
+4.  **Set the Redirect URI**:
+    - In your app's dashboard, click "Edit Settings".
+    - In the "Redirect URIs" field, add `http://localhost:8888/callback`.
+    - Click "Save" at the bottom.
+5.  **First-Time Run in MVLP**:
+    - The first time you enable the Spotify integration in MVLP, it will prompt you to enter your Client ID and Client Secret.
+    - After you enter them, a browser window will open asking you to authorize the application. Log in and accept.
+    - You will be redirected to a blank page (this is normal). You can now close the browser tab. The album art should now appear on your panel when a song is playing.
 
 ## Acknowledgements
 

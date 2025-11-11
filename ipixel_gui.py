@@ -11,6 +11,8 @@ import os
 import glob
 import httpx
 import sys
+import webbrowser
+import io
 from datetime import datetime
 from PIL import Image, ImageTk, ImageDraw, GifImagePlugin
 import ttkbootstrap as ttk
@@ -32,6 +34,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 try:
     # Correctly import the command modules from the new package structure
     from ipixel_ctrl.commands import write_data_png, write_data_gif, erase_data
+    # Import spotipy for Spotify integration
+    try:
+        import spotipy
+        from spotipy.oauth2 import SpotifyOAuth
+    except ImportError:
+        messagebox.showerror("Dependency Error", "The 'spotipy' library is not installed.\nPlease run 'pip install spotipy'.")
+        sys.exit(1)
     from ipixel_ctrl.commands import set_brightness, set_upside_down, set_clock_mode
 except ImportError as e: # pragma: no cover
     messagebox.showerror("Import Error", f"Failed to import ipixel_ctrl module: {e}\n\nPlease run 'pip install -e .' from the project root.")
@@ -188,7 +197,109 @@ class MultiviewerThread(threading.Thread):
             
             time.sleep(sleep_duration)
         print("Multiviewer thread finished.")
+        self.status_queue.put("MV_STATUS_DISABLED") # Ensure status is updated on exit
 
+class SpotifyThread(threading.Thread):
+    """A thread for managing the connection to Spotify."""
+    def __init__(self, action_queue, status_queue, client_id, client_secret, redirect_uri):
+        super().__init__()
+        self.action_queue = action_queue
+        self.status_queue = status_queue
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.redirect_uri = redirect_uri
+        self.daemon = True
+        self._stop_event = threading.Event()
+        self.sp = None
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        print("[Spotify] Thread started.")
+        if not all([self.client_id, self.client_secret, self.redirect_uri]):
+            self.status_queue.put("SPOTIFY_STATUS_ERROR:Missing credentials.")
+            print("[Spotify] ERROR: Missing credentials.")
+            return
+
+        try:
+            auth_manager = SpotifyOAuth(
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                redirect_uri=self.redirect_uri,
+                scope="user-read-currently-playing",
+                open_browser=webbrowser.open
+            )
+            self.sp = spotipy.Spotify(auth_manager=auth_manager)
+            # This will trigger the auth flow if no token is cached
+            self.sp.current_user() 
+            print("[Spotify] Successfully connected to Spotify API.")
+            self.status_queue.put("SPOTIFY_STATUS_CONNECTED")
+        except Exception as e:
+            self.status_queue.put(f"SPOTIFY_STATUS_ERROR:{e}")
+            print(f"[Spotify] ERROR: Connection failed: {e}")
+            return
+
+        last_track_id = None # Initialize to None to force the first fetch
+        while not self._stop_event.is_set():
+            try:
+                # print("[Spotify] Polling for current track...") # This can be noisy, uncomment if needed
+                current_track = self.sp.current_user_playing_track()
+                track_id = None
+                if current_track and current_track.get('item'):
+                    track_id = current_track['item']['id']
+                    track_name = current_track['item']['name']
+                else:
+                    # This case handles when nothing is playing
+                    if last_track_id is not None:
+                        print("[Spotify] No track is currently playing.")
+                        last_track_id = None # Reset to allow re-display if the same song plays again
+
+                # Fetch if the track has changed OR if it's the very first run (last_track_id is None)
+                if track_id and (track_id != last_track_id or last_track_id is None):
+                    last_track_id = track_id
+                    print(f"[Spotify] New track detected: {track_name}")
+
+                    # Check if album art exists before trying to access it
+                    images = current_track['item']['album'].get('images', [])
+                    if images:
+                        album_art_url = images[0]['url']
+                        print("[Spotify] Downloading album art...")
+                        with httpx.Client() as client:
+                            response = client.get(album_art_url)
+                            response.raise_for_status()
+                            image_data = response.content
+
+                        # Use PIL to open from bytes and save as a proper PNG to avoid format issues
+                        try:
+                            img = Image.open(io.BytesIO(image_data))
+                            # Resize the image to 64x64 before saving
+                            resized_img = img.resize((64, 64), Image.Resampling.LANCZOS).convert("RGBA")
+                            # Optimize image by converting to a paletted format with 255 colors + transparency
+                            # This significantly reduces file size for faster transfer.
+                            try:
+                                # This can fail on some images with complex palettes
+                                optimized_img = resized_img.quantize(colors=255, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.FLOYDSTEINBERG)
+                            except Exception as quantize_error:
+                                print(f"[Spotify] WARNING: Could not quantize image, falling back to RGBA. Error: {quantize_error}")
+                                optimized_img = resized_img # Use the unoptimized RGBA image as a fallback
+                            # Save in the same directory as the script to ensure a consistent location
+                            with io.BytesIO() as output:
+                                optimized_img.save(output, format="GIF", disposal=2) # Use disposal=2 for single-frame GIFs
+                                optimized_img.save(output, format="GIF", disposal=2)  # Use disposal=2 for single-frame GIFs
+                                self.action_queue.put(output.getvalue())
+                            print("[Spotify] Album art resized, optimized as GIF, and queued for display.")
+                        except Exception as pil_e:
+                            print(f"[Spotify] ERROR: Could not process album art with PIL: {pil_e}") # pragma: no cover
+                    else:
+                        print(f"[Spotify] No album art found for track: {track_name}")
+
+            except Exception as e:
+                print(f"[Spotify] ERROR: An error occurred in the polling loop: {e}")
+                last_track_id = None # Reset on error to allow re-fetching
+            
+            time.sleep(3) # Poll every 3 seconds
+        print("[Spotify] Thread finished.")
 
 class App(ttk.Window):
     def __init__(self):
@@ -215,10 +326,12 @@ class App(ttk.Window):
 
         # --- Queues for threading ---
         self.mv_action_queue = queue.Queue()
+        self.spotify_action_queue = queue.Queue()
         self.status_queue = queue.Queue() # For status updates from threads
 
         # --- Threading ---
         self.ble_threads = {} # Dict to hold a thread for each device
+        self.spotify_thread = None
         self.mv_thread = None
 
         # --- State ---
@@ -230,6 +343,7 @@ class App(ttk.Window):
         self.flip_display_var = tk.BooleanVar()
 
         # self.current_device_address = None # Replaced by multi-device support
+        self.is_sending_art = False # Lock to prevent album art spam
         self.gif_stop_timers = {} # Dictionary to hold stop timers for each device
         self.config_file = "ipixel_config.json"
         self.startup_actions_done = False # Flag to ensure startup actions run only once
@@ -261,6 +375,7 @@ class App(ttk.Window):
 
         # --- Build Main View ---
         self.setup_mv_view(main_frame)
+        self.setup_spotify_view(main_frame)
 
         # --- Create and hide secondary windows at startup ---
         self.devices_window = ttk.Toplevel(self)
@@ -290,6 +405,7 @@ class App(ttk.Window):
         # Start queue processors
         self.process_status_queue()
         self.process_mv_action_queue()
+        self.process_spotify_action_queue()
 
         # Automatically populate device list and connect to saved devices on startup
         self.after(100, self.populate_tree_from_config)
@@ -322,45 +438,64 @@ class App(ttk.Window):
         ttk.Button(button_frame, text="Manage Devices", command=self.open_devices_window, bootstyle="primary-outline").grid(row=0, column=0, sticky="ew", padx=5)
         ttk.Button(button_frame, text="DEBUG", command=self.open_manual_send_window, bootstyle="primary-outline").grid(row=0, column=1, sticky="ew", padx=5)
 
+    def setup_spotify_view(self, parent):
+        """Populate the main Spotify view with its controls."""
+        spotify_frame = ttk.LabelFrame(parent, text="Spotify Album Art", padding=(10, 5))
+        spotify_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
+        spotify_frame.columnconfigure(0, weight=1)
+
+        self.is_spotify_enabled = tk.BooleanVar(value=False)
+        spotify_check = ttk.Checkbutton(spotify_frame, text="Enable Spotify Integration", variable=self.is_spotify_enabled, command=self.toggle_spotify)
+        spotify_check.pack(anchor="w")
+
+        self.spotify_status_var = tk.StringVar(value="Disabled")
+        self.spotify_status_label = ttk.Label(spotify_frame, textvariable=self.spotify_status_var, bootstyle="secondary")
+        self.spotify_status_label.pack(anchor="w", padx=10, pady=5)
+
     def setup_manual_send_window(self, parent):
         """Populates the UI for the Manual Send window."""
-        parent.columnconfigure(0, weight=1)
-        
-        # --- File Selection Frame ---
-        file_frame = ttk.LabelFrame(parent, text="File Selection", padding=(10, 5))
-        file_frame.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
-        file_frame.columnconfigure(1, weight=1)
-        ttk.Label(file_frame, text="Files:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.file_listbox = tk.Listbox(file_frame, selectmode=tk.EXTENDED, height=4)
-        self.file_listbox.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        browse_button = ttk.Button(file_frame, text="Browse Files...", command=self.browse_files)
-        browse_button.grid(row=1, column=1, padx=5, pady=5, sticky="e")
+        parent.columnconfigure(0, weight=1) # Make notebook expand
+        parent.rowconfigure(0, weight=1)
 
-        # --- Write Mode Notebook ---
-        send_notebook = ttk.Notebook(parent)
-        send_notebook.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        # --- Main Notebook for Tabs ---
+        debug_notebook = ttk.Notebook(parent)
+        debug_notebook.grid(row=0, column=0, padx=10, pady=5, sticky="nsew")
+
+        # --- Multiviewer Tab ---
+        mv_debug_tab = ttk.Frame(debug_notebook, padding="10")
+        debug_notebook.add(mv_debug_tab, text='Multiviewer')
+        mv_debug_tab.columnconfigure(0, weight=1)
+
+        # --- Populate Multiviewer Tab ---
+        file_frame = ttk.LabelFrame(mv_debug_tab, text="File Selection", padding=(10, 5))
+        file_frame.grid(row=0, column=0, sticky="ew")
+        file_frame.columnconfigure(1, weight=1)
+        ttk.Label(file_frame, text="Files:").grid(row=0, column=0, sticky="w")
+        self.file_listbox = tk.Listbox(file_frame, selectmode=tk.EXTENDED, height=4, width=50)
+        self.file_listbox.grid(row=0, column=1, sticky="ew")
+        ttk.Button(file_frame, text="Browse...", command=self.browse_files).grid(row=1, column=1, sticky="e", pady=5)
+
+        send_notebook = ttk.Notebook(mv_debug_tab)
+        send_notebook.grid(row=1, column=0, sticky="ew", pady=5)
         self.png_frame = ttk.Frame(send_notebook, padding="10")
-        send_notebook.add(self.png_frame, text='Write Image (PNG/JPG)')
+        send_notebook.add(self.png_frame, text='Image (PNG/JPG)')
         self.gif_frame = ttk.Frame(send_notebook, padding="10")
-        send_notebook.add(self.gif_frame, text='Write Animation (GIF)')
+        send_notebook.add(self.gif_frame, text='Animation (GIF)')
         self.setup_png_tab()
         self.setup_gif_tab()
 
-        # --- Debug GIF Frame ---
-        self.debug_gif_frame = ttk.LabelFrame(parent, text="Quick Send GIFs", padding=(10, 5))
-        self.debug_gif_frame.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+        self.debug_gif_frame = ttk.LabelFrame(mv_debug_tab, text="Quick Send GIFs", padding=(10, 5))
+        self.debug_gif_frame.grid(row=2, column=0, sticky="ew", pady=5)
         self.populate_debug_gifs()
 
-        # --- Global Action Frame ---
-        action_frame = ttk.Frame(parent)
-        action_frame.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
+        action_frame = ttk.Frame(mv_debug_tab)
+        action_frame.grid(row=3, column=0, sticky="ew", pady=10)
         action_frame.columnconfigure(0, weight=1)
         action_frame.columnconfigure(1, weight=1)
-
         self.erase_button = ttk.Button(action_frame, text="Erase All Buffers", command=self.start_erase, bootstyle="secondary")
-        self.erase_button.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+        self.erase_button.grid(row=0, column=1, padx=5, sticky="ew")
         self.write_button = ttk.Button(action_frame, text="Write to All Devices", command=self.start_write, bootstyle="primary")
-        self.write_button.grid(row=0, column=0, padx=5, pady=10, sticky="ew")
+        self.write_button.grid(row=0, column=0, padx=5, sticky="ew")
 
     def setup_devices_window(self, parent):
         """Populate the Devices tab."""
@@ -787,7 +922,12 @@ class App(ttk.Window):
         """Loads the last device address from the config file."""
         try:
             with open(self.config_file, 'r') as f:
-                self.device_configs = json.load(f).get('device_configs', {})
+                config_data = json.load(f)
+                self.device_configs = config_data.get('device_configs', {})
+                # Load Spotify config if it exists
+                spotify_config = config_data.get('spotify_config', {})
+                self.spotify_client_id = spotify_config.get('client_id', '')
+                self.spotify_client_secret = spotify_config.get('client_secret', '')
                 print(f"Loaded device configs for: {list(self.device_configs.keys())}")
         except (FileNotFoundError, json.JSONDecodeError):
             print("No config file found or it's invalid. Will scan for devices.")
@@ -797,35 +937,157 @@ class App(ttk.Window):
         """Saves the current device address to the config file."""
         try:
             with open(self.config_file, 'w') as f:
-                json.dump({'device_configs': self.device_configs}, f, indent=4)
-                print(f"Saved configs for devices: {list(self.device_configs.keys())}")
+                # Prepare the full config data object
+                config_data = {
+                    'device_configs': self.device_configs,
+                    'spotify_config': {
+                        'client_id': getattr(self, 'spotify_client_id', ''),
+                        'client_secret': getattr(self, 'spotify_client_secret', '')
+                    }
+                }
+                json.dump(config_data, f, indent=4)
+                print(f"Saved config file: {self.config_file}")
         except Exception as e:
             print(f"Error saving config: {e}")
+    
+    def toggle_spotify(self):
+        if self.is_spotify_enabled.get():
+            # Check for credentials
+            if not hasattr(self, 'spotify_client_id') or not self.spotify_client_id:
+                self.prompt_for_spotify_credentials()
+            else:
+                self.start_spotify_thread()
+        else:
+            if self.spotify_thread and self.spotify_thread.is_alive():
+                self.spotify_thread.stop()
+                self.spotify_status_var.set("Disabled")
+                self.spotify_status_label.config(bootstyle="secondary")
+                print("Spotify thread stopped.")
+            # Check if other integrations are running before reverting to clock
+            self._check_and_set_idle_state()
+
+    def start_spotify_thread(self):
+        if self.spotify_thread and self.spotify_thread.is_alive():
+            self.spotify_thread.stop()
+
+        self.spotify_thread = SpotifyThread(
+            self.spotify_action_queue, self.status_queue,
+            self.spotify_client_id, self.spotify_client_secret,
+            "http://localhost:8888/callback" # Standard redirect URI
+        )
+        self.spotify_thread.start()
+        self.spotify_status_var.set("Connecting...")
+        self.spotify_status_label.config(bootstyle="warning")
+
+    def prompt_for_spotify_credentials(self):
+        """Creates a dialog to get Spotify credentials from the user."""
+        dialog = ttk.Toplevel(self)
+        dialog.title("Spotify Credentials")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="Enter your Spotify API credentials.", bootstyle="primary").pack(pady=(0, 10))
+        instructions_frame = ttk.LabelFrame(main_frame, text="How to get your credentials", padding=10)
+        instructions_frame.pack(fill=tk.X, pady=(0, 15))
+
+        def open_spotify_dev_page(event=None):
+            webbrowser.open("https://developer.spotify.com/dashboard", new=2)
+
+        link_font = font.nametofont("TkDefaultFont").copy()
+        link_font.configure(underline=True)
+
+        step1_text = "1. Go to the Spotify Developer Dashboard."
+        how_to_link = ttk.Label(instructions_frame, text=step1_text, bootstyle="info", cursor="hand2", font=link_font)
+        how_to_link.pack(anchor="w")
+        how_to_link.bind("<Button-1>", open_spotify_dev_page)
+
+        instructions_text_part1 = (
+            '2. Click "Create App", give it a name, and agree to the terms.\n'
+            '3. Copy the "Client ID" and "Client Secret" into the fields below.\n'
+            '4. Click "Edit Settings" on the Spotify page.\n'
+            '5. In the "Redirect URIs" field, add this exact URL:'
+        )
+        ttk.Label(instructions_frame, text=instructions_text_part1, justify=tk.LEFT).pack(anchor="w", pady=(5, 0))
+
+        uri_frame = ttk.Frame(instructions_frame)
+        uri_frame.pack(fill=tk.X, padx=15, pady=5)
+        redirect_uri = "http://localhost:8888/callback"
+        uri_entry = ttk.Entry(uri_frame, bootstyle="readonly")
+        uri_entry.insert(0, redirect_uri)
+        uri_entry.config(state="readonly")
+        uri_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(uri_frame, text="Copy", command=lambda: self.copy_to_clipboard(redirect_uri, dialog)).pack(side=tk.LEFT, padx=(5, 0))
+
+        instructions_text_part2 = '6. Click "Save" on the Spotify page, then "Save & Connect" here.'
+        ttk.Label(instructions_frame, text=instructions_text_part2, justify=tk.LEFT).pack(anchor="w", pady=(5, 0))
+
+        # --- Input Fields ---
+        form_frame = ttk.Frame(main_frame)
+        form_frame.pack(fill=tk.X)
+        form_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(form_frame, text="Client ID:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        client_id_entry = ttk.Entry(form_frame, width=40)
+        client_id_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        ttk.Label(form_frame, text="Client Secret:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        client_secret_entry = ttk.Entry(form_frame, width=40, show="*")
+        client_secret_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        def on_save():
+            client_id = client_id_entry.get().strip()
+            client_secret = client_secret_entry.get().strip()
+
+            if not client_id or not client_secret:
+                messagebox.showerror("Missing Info", "Both Client ID and Client Secret are required.", parent=dialog)
+                return
+
+            self.spotify_client_id = client_id
+            self.spotify_client_secret = client_secret
+            self.save_config()
+            dialog.destroy()
+            self.start_spotify_thread()
+
+        ttk.Button(main_frame, text="Save & Connect", command=on_save, bootstyle="success").pack(pady=10)
+
+    def copy_to_clipboard(self, text, parent_window):
+        """Copies the given text to the clipboard."""
+        parent_window.clipboard_clear()
+        parent_window.clipboard_append(text)
+        self.status_label.config(text="Status: Redirect URI copied to clipboard.")
+        self.after(2000, lambda: self.status_label.config(text="Status: Idle"))
+
+    def _check_and_set_idle_state(self):
+        """Checks if any integrations are active and sets clock if not."""
+        if not self.is_mv_enabled.get() and not self.is_spotify_enabled.get():
+            print("No integrations active. Reverting to clock display.")
+            self.send_clock_command_to_all()
 
     def toggle_multiviewer(self):
         if self.is_mv_enabled.get():
-            def start_new_thread():
-                # Re-enable the checkbox now that the transition is complete.
-                self.mv_checkbutton.config(state=tk.NORMAL)
+            if not self.mv_thread or not self.mv_thread.is_alive():
                 self.mv_thread = MultiviewerThread(self.mv_action_queue, self.status_queue)
                 self.mv_thread.start()
                 print("Multiviewer thread started.")
                 self.send_gif_from_path("gifs/mv.gif")
-
-            # Disable the checkbox to prevent rapid toggling.
-            self.mv_checkbutton.config(state=tk.DISABLED)
-
-            if self.mv_thread and self.mv_thread.is_alive():
-                self.mv_thread.stop()
-                # Give the old thread a moment to stop before starting the new one.
-                self.after(200, start_new_thread)
-            else:
-                start_new_thread() # No old thread, start immediately.
         else:
             if self.mv_thread and self.mv_thread.is_alive():
                 self.mv_thread.stop()
                 print("Multiviewer thread stopped.")
-            self.send_clock_command_to_all()
+            
+            # Manually update status when disabling
+            self.mv_status_var.set("Disabled")
+            self.mv_status_label.config(bootstyle="secondary")
+
+            # The thread will now send MV_STATUS_DISABLED to the queue on exit,
+            # which will be handled by process_status_queue for a reliable update.
+            # Check if other integrations are running before reverting to clock
+            self._check_and_set_idle_state()
+
 
     def process_status_queue(self):
         """Check for new status messages and update the GUI."""
@@ -881,11 +1143,21 @@ class App(ttk.Window):
                 self.mv_status_label.config(bootstyle="success")
             elif message == "MV_STATUS_RETRYING":
                 self.mv_status_var.set("Retrying...")
-                self.mv_status_label.config(foreground="orange")
+                self.mv_status_label.config(bootstyle="warning")
             elif message == "MV_STATUS_DISABLED":
                 self.mv_status_var.set("Disabled")
-            elif not message.startswith("MV_"): # Don't let MV messages overwrite main status
-                self.status_label.config(text=f"Status: {message}")
+                self.mv_status_label.config(bootstyle="secondary")
+            elif message.startswith("SPOTIFY_STATUS_"):
+                status = message.replace("SPOTIFY_STATUS_", "")
+                if status == "CONNECTED":
+                    self.spotify_status_var.set("Connected")
+                    self.spotify_status_label.config(bootstyle="success")
+                    # This is a spotify-specific status, so we don't want it in the main label.
+                    # We can just return here.
+                else: # ERROR
+                    error_msg = status.split(":", 1)[-1]
+                    self.spotify_status_var.set(f"Error: {error_msg}")
+                    self.spotify_status_label.config(bootstyle="danger")
         except queue.Empty:
             pass
         finally:
@@ -901,6 +1173,28 @@ class App(ttk.Window):
             pass
         finally:
             self.after(50, self.process_mv_action_queue)
+    
+    def process_spotify_action_queue(self):
+        """Check for actions from the Spotify thread (new album art)."""
+        if self.is_sending_art: # Don't process new art if the last one is still sending
+            self.after(100, self.process_spotify_action_queue)
+            return
+        try:
+            image_data = self.spotify_action_queue.get_nowait()
+            print(f"[Spotify] Action queue received art data. Setting lock.")
+            self.is_sending_art = True # Set lock
+            
+            # Use a temporary file in memory to send the image data
+            # The file object needs to be kept alive until the command is processed.
+            # Since start_write is synchronous, this is safe.
+            with io.BytesIO(image_data) as temp_file:
+                temp_file.name = "temp_album_art.gif" # The library uses the name attribute to detect file type
+                self.start_write(image_file_obj=temp_file)
+
+        except queue.Empty:
+            pass
+        finally:
+            self.after(100, self.process_spotify_action_queue)
 
     def resend_current_mv_action(self):
         """Resends the last known Multiviewer action."""
@@ -964,7 +1258,7 @@ class App(ttk.Window):
         )
         self.queue_command_for_device(address, params, set_clock_mode.make, f"Clock Style {style}")
 
-    def start_write(self):
+    def start_write(self, image_file_obj=None):
         if not self.ble_threads:
             messagebox.showerror("Error", "Device is not connected.")
             return
@@ -972,7 +1266,12 @@ class App(ttk.Window):
         image_files = self.file_listbox.get(0, tk.END)
         if not image_files:
             messagebox.showerror("Error", "At least one image file must be selected.")
-            return
+            # Allow proceeding if an in-memory object is provided
+            if not image_file_obj:
+                return
+        
+        # If an in-memory file object is passed, use it. Otherwise, use file paths.
+        image_source = [image_file_obj] if image_file_obj else image_files
 
         # Cancel any previously scheduled GIF-to-static-frame timer.
         # This ensures a new write action overrides any pending "stop" commands for all devices.
@@ -980,15 +1279,17 @@ class App(ttk.Window):
             self.after_cancel(timer_id)
         self.gif_stop_timers.clear()
 
-        # Iterate over each connected device and generate a specific payload for it
-        for address, config in self.device_configs.items():
-            if address not in self.ble_threads:
-                continue # Skip devices that are configured but not connected
+        # Iterate over each connected device and queue a command for it.
+        for address, thread in self.ble_threads.items():
+            config = self.device_configs.get(address)
+            if not config:
+                print(f"Warning: No config found for connected device {address}. Skipping command.")
+                continue
 
             try:
                 # Common parameters
                 common_params = {
-                    'image_file': image_files,
+                    'image_file': image_source,
                     'start_buffer': config['buffer'],
                     'auto_resize': config['auto_resize'],
                     'device_width': config['width'],
@@ -999,13 +1300,20 @@ class App(ttk.Window):
                 }
 
                 # Automatically detect if we should treat this as a GIF/animation
-                is_gif = any(f.lower().endswith('.gif') for f in image_files)
-                if is_gif or self.make_from_image_var.get():
+                is_gif = any(isinstance(f, str) and f.lower().endswith('.gif') for f in image_source)
+                is_spotify_art = image_file_obj is not None
+                
+                if is_spotify_art: # Handle Spotify Album Art specifically
+                    # Spotify art is a single GIF, never joined.
+                    params = argparse.Namespace(**common_params, join_image_files=False)
+                    params = argparse.Namespace(**common_params, join_image_files=False, make_from_image=0)
+                    make_function = write_data_gif.make
+                elif is_gif or self.make_from_image_var.get(): # Handle GIFs or creating a GIF from images
                     make_from_image = self.make_from_image_var.get()
                     duration = int(self.duration_entry.get()) if make_from_image else 0
                     params = argparse.Namespace(**common_params, make_from_image=duration)
                     make_function = write_data_gif.make
-                else: # PNG Tab
+                else: # Handle standard PNGs/JPGs from the debug window
                     params = argparse.Namespace(**common_params, join_image_files=self.join_files_var.get())
                     make_function = write_data_png.make
 
@@ -1023,6 +1331,11 @@ class App(ttk.Window):
             except ValueError as e:
                 messagebox.showerror("Invalid Input", f"Please check your inputs for device {address}. Error: {e}")
                 return # Stop on first error
+        
+        # If we were sending album art, release the lock now that commands are queued
+        if self.is_sending_art:
+            print("[Spotify] Art command queued. Releasing lock.")
+            self.is_sending_art = False
 
     def queue_command_for_device(self, address, params, make_function, action_name):
         """Generates a payload and queues it for a specific device."""
@@ -1104,13 +1417,24 @@ if __name__ == "__main__":
 
     def on_closing():
         app.send_clock_command_to_all()
-        # Give the BLE threads a moment to send the clock command before stopping them.
-        time.sleep(0.5)
+        # Give BLE threads a moment to send the clock command
+        time.sleep(0.2)
+
+        threads_to_join = []
         if app.mv_thread and app.mv_thread.is_alive():
             app.mv_thread.stop()
+            threads_to_join.append(app.mv_thread)
+        if app.spotify_thread and app.spotify_thread.is_alive():
+            app.spotify_thread.stop()
+            threads_to_join.append(app.spotify_thread)
         for thread in app.ble_threads.values():
             if thread.is_alive():
                 thread.stop()
+                threads_to_join.append(thread)
+        
+        # Wait for threads to finish, with a timeout
+        for thread in threads_to_join:
+            thread.join(timeout=1.0)
         app.destroy()
 
     app.protocol("WM_DELETE_WINDOW", on_closing)

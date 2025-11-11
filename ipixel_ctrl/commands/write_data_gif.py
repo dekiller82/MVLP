@@ -56,6 +56,13 @@ def args(subparser):
         help = 'T.B.D.'
     )
     arg.add_argument(
+        "--duplicate-horizontally",
+        dest = 'duplicate_horizontally',
+        default = False,
+        action = "store_true",
+        help = 'T.B.D.'
+    )
+    arg.add_argument(
         "image_file",
         nargs = "+",
         help = 'image file (gif)'

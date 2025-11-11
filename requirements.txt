@@ -2,3 +2,4 @@ bleak
 Pillow
 ttkbootstrap
 httpx
+spotipy
