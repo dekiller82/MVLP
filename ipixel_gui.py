@@ -973,7 +973,7 @@ class App(ttk.Window):
         self.spotify_thread = SpotifyThread(
             self.spotify_action_queue, self.status_queue,
             self.spotify_client_id, self.spotify_client_secret,
-            "http://localhost:8888/callback" # Standard redirect URI
+            "http://127.0.0.1:8888/callback" # Standard redirect URI
         )
         self.spotify_thread.start()
         self.spotify_status_var.set("Connecting...")
@@ -1015,7 +1015,7 @@ class App(ttk.Window):
 
         uri_frame = ttk.Frame(instructions_frame)
         uri_frame.pack(fill=tk.X, padx=15, pady=5)
-        redirect_uri = "http://localhost:8888/callback"
+        redirect_uri = "http://127.0.0.1:8888/callback"
         uri_entry = ttk.Entry(uri_frame, bootstyle="readonly")
         uri_entry.insert(0, redirect_uri)
         uri_entry.config(state="readonly")
