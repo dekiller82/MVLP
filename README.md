@@ -58,7 +58,7 @@ To display album art from Spotify, you need to set up a Spotify Developer applic
     - Once the app is created, you will see your **Client ID**. Click "Show client secret" to see the **Client Secret**. You will need both of these.
 4.  **Set the Redirect URI**:
     - In your app's dashboard, click "Edit Settings".
-    - In the "Redirect URIs" field, add `http://localhost:8888/callback`.
+    - In the "Redirect URIs" field, add `http://127.0.0.1:8888/callback`.
     - Click "Save" at the bottom.
 5.  **First-Time Run in MVLP**:
     - The first time you enable the Spotify integration in MVLP, it will prompt you to enter your Client ID and Client Secret.
