@@ -308,8 +308,9 @@ class App(ttk.Window):
         self.title("MVLP")
 
         # --- Icon and Font ---
-        if os.path.exists("icon.ico"):
-            self.iconbitmap("icon.ico")
+        if os.path.exists("icon.png"):
+            img = self.load_icon_image("icon.png", (32, 32))
+            self.iconphoto(False, img)
         
         # Fonts will now be handled by the ttkbootstrap theme for universal compatibility.
 
@@ -383,7 +384,7 @@ class App(ttk.Window):
         self.devices_window.title("MVLP - Manage Devices")
         self.devices_window.geometry("550x600")
         self.devices_window.minsize(550, 400)
-        if os.path.exists("icon.ico"): self.devices_window.iconbitmap("icon.ico")
+        if os.path.exists("icon.png"): self.devices_window.iconphoto(False, self.load_icon_image("icon.png", (32, 32)))
         self.setup_devices_window(self.devices_window)
         self.devices_window.protocol("WM_DELETE_WINDOW", self.devices_window.withdraw)
 
@@ -391,7 +392,7 @@ class App(ttk.Window):
         self.manual_send_window.withdraw() # Hide window before populating it
         self.manual_send_window.title("MVLP - DEBUG")
         self.manual_send_window.minsize(550, 400)
-        if os.path.exists("icon.ico"): self.manual_send_window.iconbitmap("icon.ico")
+        if os.path.exists("icon.png"): self.manual_send_window.iconphoto(False, self.load_icon_image("icon.png", (32, 32)))
         self.setup_manual_send_window(self.manual_send_window)
         self.manual_send_window.protocol("WM_DELETE_WINDOW", self.manual_send_window.withdraw)
 
@@ -418,7 +419,7 @@ class App(ttk.Window):
 
     def setup_mv_view(self, parent):
         """Populate the main Multiviewer view with its controls."""
-        mv_frame = ttk.LabelFrame(parent, text="Multiviewer for F1", padding=(10, 5))
+        mv_frame = ttk.LabelFrame(parent, text="Multiviewer for F1")
         mv_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
         mv_frame.columnconfigure(0, weight=1)
         
@@ -440,7 +441,7 @@ class App(ttk.Window):
 
     def setup_spotify_view(self, parent):
         """Populate the main Spotify view with its controls."""
-        spotify_frame = ttk.LabelFrame(parent, text="Spotify Album Art", padding=(10, 5))
+        spotify_frame = ttk.LabelFrame(parent, text="Spotify Album Art")
         spotify_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
         spotify_frame.columnconfigure(0, weight=1)
 
@@ -462,12 +463,12 @@ class App(ttk.Window):
         debug_notebook.grid(row=0, column=0, padx=10, pady=5, sticky="nsew")
 
         # --- Multiviewer Tab ---
-        mv_debug_tab = ttk.Frame(debug_notebook, padding="10")
+        mv_debug_tab = ttk.Frame(debug_notebook)
         debug_notebook.add(mv_debug_tab, text='Multiviewer')
         mv_debug_tab.columnconfigure(0, weight=1)
 
         # --- Populate Multiviewer Tab ---
-        file_frame = ttk.LabelFrame(mv_debug_tab, text="File Selection", padding=(10, 5))
+        file_frame = ttk.LabelFrame(mv_debug_tab, text="File Selection")
         file_frame.grid(row=0, column=0, sticky="ew")
         file_frame.columnconfigure(1, weight=1)
         ttk.Label(file_frame, text="Files:").grid(row=0, column=0, sticky="w")
@@ -477,14 +478,14 @@ class App(ttk.Window):
 
         send_notebook = ttk.Notebook(mv_debug_tab)
         send_notebook.grid(row=1, column=0, sticky="ew", pady=5)
-        self.png_frame = ttk.Frame(send_notebook, padding="10")
+        self.png_frame = ttk.Frame(send_notebook)
         send_notebook.add(self.png_frame, text='Image (PNG/JPG)')
-        self.gif_frame = ttk.Frame(send_notebook, padding="10")
+        self.gif_frame = ttk.Frame(send_notebook)
         send_notebook.add(self.gif_frame, text='Animation (GIF)')
         self.setup_png_tab()
         self.setup_gif_tab()
 
-        self.debug_gif_frame = ttk.LabelFrame(mv_debug_tab, text="Quick Send GIFs", padding=(10, 5))
+        self.debug_gif_frame = ttk.LabelFrame(mv_debug_tab, text="Quick Send GIFs")
         self.debug_gif_frame.grid(row=2, column=0, sticky="ew", pady=5)
         self.populate_debug_gifs()
 
@@ -511,7 +512,7 @@ class App(ttk.Window):
         ttk.Button(conn_frame, text="Reconnect Saved", command=self.start_connection_process, bootstyle="secondary-outline").grid(row=0, column=1, padx=5, sticky="ew")
         ttk.Button(conn_frame, text="Disconnect All", command=self.disconnect_all_devices).grid(row=0, column=2, padx=5)
 
-        devices_frame = ttk.LabelFrame(parent, text="Connected Devices", padding=(10, 5))
+        devices_frame = ttk.LabelFrame(parent, text="Connected Devices")
         devices_frame.grid(row=1, column=0, sticky="nsew", pady=5)
         devices_frame.columnconfigure(0, weight=1)
         devices_frame.rowconfigure(0, weight=1)
@@ -531,7 +532,7 @@ class App(ttk.Window):
         self.device_tree.bind("<Button-1>", self.on_device_tree_click)
 
         # --- Image Options Frame (now per-device) ---
-        self.options_frame = ttk.LabelFrame(parent, text="Device Options (Select a device)", padding=(10, 5))
+        self.options_frame = ttk.LabelFrame(parent, text="Device Options (Select a device)")
         self.options_frame.grid(row=2, column=0, sticky="ew", pady=5)
         self.options_frame.columnconfigure(1, weight=1)
 
@@ -725,6 +726,16 @@ class App(ttk.Window):
         dialog = ttk.Toplevel(self)
         dialog.title("Set Device Dimensions")
         dialog.transient(self)
+        dialog.resizable(False, False)
+        
+        # Center the dialog on the screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Use wait_visibility and wait_window for proper modal behavior
+        dialog.wait_visibility()
         dialog.grab_set()
 
         ttk.Label(dialog, text=f"Please set dimensions for {name}:", padding=(10,10)).pack()
@@ -736,7 +747,7 @@ class App(ttk.Window):
         ttk.Label(form_frame, text="Width:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         width_entry = ttk.Entry(form_frame)
         width_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        width_entry.insert(0, "96")
+        width_entry.insert(0, "32")
 
         ttk.Label(form_frame, text="Height:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         height_entry = ttk.Entry(form_frame)
@@ -991,7 +1002,7 @@ class App(ttk.Window):
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(main_frame, text="Enter your Spotify API credentials.", bootstyle="primary").pack(pady=(0, 10))
-        instructions_frame = ttk.LabelFrame(main_frame, text="How to get your credentials", padding=10)
+        instructions_frame = ttk.LabelFrame(main_frame, text="How to get your credentials")
         instructions_frame.pack(fill=tk.X, pady=(0, 15))
 
         def open_spotify_dev_page(event=None):
